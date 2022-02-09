@@ -1,4 +1,139 @@
-= Index page
-ifndef::imagesdir[:imagesdir: images]
+ifndef::imagesdir[:imagesdir: ../docs/images]
 
-image::img.png[]
+= JPA Security
+
+== Architecture
+
+In diesem Beispiel bauen wir 3 einfache Endpoints:
+
+* /api/public
+* /api/users/me
+* /api/admin
+
+Auf den Endpunkt */api/public* kann anonym zugegriffen werden.
+Der Endpunkt */api/admin* ist mit RBAC geschützt, auf den nur Benutzer mit der Rolle *admin* zugreifen können.
+An diesem Endpunkt verwenden wir die *@RolesAllowed-Annotation*, um die Zugriffsbeschränkung deklarativ durchzusetzen.
+Der Endpunkt */api/users/me* ist ebenfalls mit RBAC geschützt, auf den nur Benutzer mit der entsprechenden Benutzerrolle zugreifen können.
+Als Antwort wird ein JSON-Dokument mit Informationen über den Benutzer zurückgegeben.
+
+== Bevor wir starten:
+[source,xml]
+----
+<dependency>
+    <groupId>io.quarkus</groupId>
+    <artifactId>quarkus-security-jpa</artifactId>
+</dependency>
+----
+
+== Beispiel
+
+Hier in diesem Codeabschnitt wird der Endpoint */api/public* implementiert.
+[source, java]
+----
+@Path("/api/public")
+public class PublicResource {
+
+
+    @GET
+    @PermitAll  // <1>
+    @Produces(MediaType.TEXT_PLAIN)
+    public String publicResource() {
+        return "public";
+    }
+}
+----
+<1> Der Zugriff auf diesen Endpoint sind für Alle erlaubt.
+
+---
+
+[source, java]
+----
+@Path("/api/admin")
+public class AdminResource {
+
+
+    @GET
+    @RolesAllowed("admin")  // <1>
+    @Produces(MediaType.TEXT_PLAIN)
+    public String adminResource(){
+        return "admin";
+    }
+}
+----
+<1> @RolesAllowed-Annotation stellt sicher, dass nur Benutzer, denen die Admin-Rolle zugewiesen wurde, auf den Endpunkt zugreifen können.
+
+---
+
+[source, java]
+----
+@Path("/api/users")
+public class UserResource {
+
+    @GET
+    @RolesAllowed("user") // <1>
+    @Path("/me")
+    public String me(@Context SecurityContext securityContext){
+        return securityContext.getUserPrincipal().getName();
+    }
+}
+----
+<1> Der einzige Unterschied hier besteht, dass nur Benutzer mit der Rolle *user* zugreifen können.
+Wir verwenden SecurityContext, um Zugriff auf den aktuellen authentifizierten Principal zu erhalten und geben den Benutzernamen zurück.
+Diese Informationen werden aus der Datenbank geladen.
+
+---
+
+
+== Entität
+
+
+[source,java]
+----
+@Entity
+@Table(name = "test_user")
+@UserDefinition // <1>
+public class User extends PanacheEntity {
+
+    @Username // <2>
+    public String username;
+    @Password // <3>
+    public String password;
+    @Roles // <4>
+    public String role;
+
+    public static void add(String username, String password, String role) { // <5>
+        User user = new User();
+        user.username = username;
+        user.password = BcryptUtil.bcryptHash(password);
+        user.role = role;
+        user.persist();
+    }
+}
+----
+
+<1> Diese Annotation muss auf einer einzigen Entity vorhanden sein. Es kann eine Hibernate ORM Entity oder ein Hibernate ORM mit Panache Entity sein.
+<2> Dies gibt das Feld an, das für den Benutzernamen verwendet wird.
+<3> Dies gibt das Feld an, das für das Passwort verwendet wird. Sie können es auch für Klartext-Passwörter konfigurieren.
+<4> Dies gibt das Feld an, die für die Rolle verwendet wird.
+<5> Diese Methode ermöglicht es uns, Benutzer hinzuzufügen
+
+== StartUp Klasse
+
+[source,java]
+----
+@Singleton
+public class Startup {
+
+    @Transactional
+    public void loadUsers(@Observes StartupEvent evt) {
+        // reset and load all test users
+        User.deleteAll();
+        User.add("admin", "admin", "admin");
+        User.add("user", "user", "user");
+    }
+----
+
+== Testen
+In den Tests verwenden wir den grundlegenden Authentifizierungsmechanismus, den Sie aktivieren können, indem man *quarkus.http.auth.basic=true* in application.properties setzt.
+
+image::test.png[]
